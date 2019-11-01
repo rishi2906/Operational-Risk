@@ -1,0 +1,955 @@
+---
+title: 'Distribution Fit Analysis: Model 388 [Fraud] (Body+Tail)'
+author: "CRISIL"
+date: "October 31, 2019"
+output:
+  word_document:
+    toc: yes
+  html_document: default
+  pdf_document:
+    toc: yes
+---
+  
+```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r,warning=FALSE,results='hide',include=FALSE,message=FALSE}
+library(knitr)
+library(lubridate)
+library(dplyr)
+library(fExtremes)
+library(plotly)
+library(evir)
+library(zoo)  
+library(fitdistrplus)
+library(flexsurv)
+library(xlsx)
+library(reliaR)
+library(EnvStats)
+library(actuar)
+library(truncdist)
+library(truncgof)
+library(TruncatedDistributions)
+library(pander)
+library(ggpubr)
+library(ReIns)
+library(metRology)
+library(evd)
+library(flextable)
+library(captioner)
+library(qqplotr)
+library(vctrs)
+
+dburr <- actuar::dburr
+pburr <- actuar::pburr
+qburr <- actuar::qburr
+
+dt.scaled <- metRology::dt.scaled
+pt.scaled <- metRology::pt.scaled
+qt.scaled <- metRology::qt.scaled
+
+dgpd <- fExtremes::dgpd
+pgpd <- fExtremes::pgpd
+qgpd <- fExtremes::qgpd
+
+
+round_df <- function(x, digits) {
+  numeric_columns <- sapply(x, mode) == 'numeric'
+  x[numeric_columns] <-  round(x[numeric_columns], digits)
+  x
+}
+
+eda <- function(temp_df,k1,k2){
+  temp_df[,"Year"] <- as.yearqtr(temp_df$Date,"%Y-%m-%d")
+  temp_df$Loss <- as.numeric(as.character(temp_df$Loss))
+  #Summary Table
+  temp_df$value=1
+  count <- temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize(count=sum(value,na.rm=T))
+  mean_loss<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize(Mean=mean(Loss,na.rm=T))
+  median_loss<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize(Median=median(Loss,na.rm=T))
+  Skweness_Loss<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize(Skewness=skewness(Loss,na.rm = T))
+  min_Loss<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize(Minimum=min(Loss,na.rm = T))
+  max_Loss<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize(Maximum=max(Loss,na.rm = T))
+  percent_loss_1<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize('1%'=quantile(Loss,c(.01),na.rm=T))
+  percent_loss_10<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize("10%"=quantile(Loss,c(.10),na.rm=T))
+  percent_loss_50<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize("50%"=quantile(Loss,c(.50),na.rm=T))
+  percent_loss_75<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize("75%"=quantile(Loss,c(.75),na.rm=T))
+  percent_loss_95<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize("95%"=quantile(Loss,c(.95),na.rm=T))
+  percent_loss_975<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize("95%"=quantile(Loss,c(.975),na.rm=T))
+  percent_loss_99<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize("95%"=quantile(Loss,c(.99),na.rm=T))
+  percent_loss_999<-temp_df %>% dplyr::group_by(Year) %>% dplyr::summarize("99%"=quantile(Loss,c(.999),na.rm=T))
+  missing <- temp_df %>% dplyr::group_by(Year) %>% dplyr::tally(is.na(Loss))
+  summ_table<-data.frame(Quarter=mean_loss[,1],count[,2],round(mean_loss[,2],2),median_loss[,2],round(Skweness_Loss[,2],2),round(min_Loss[,2],2),round(max_Loss[,2],2),round(percent_loss_1[,2],2),round(percent_loss_10[,2],2),round(percent_loss_50[,2],2),round(percent_loss_75[,2],2),round(percent_loss_95[,2],2),round(percent_loss_99[,2],2),missing[,2])
+  
+  #kable(summ_table,caption = "summary of the Data")
+  
+  over_all_summ <- data.frame(nrow(temp_df),sort(temp_df$Year)[1],sort(temp_df$Year)[nrow(temp_df)], sum(nrow(temp_df),k1,k2),k1,k2,length(temp_df$Year),round(min(temp_df$Loss),2),round(max(temp_df$Loss),2),round(mean(temp_df$Loss),2),round(median(temp_df$Loss),2),round(sd(temp_df$Loss),2),round(skewness(temp_df$Loss),2),round(kurtosis(temp_df$Loss),2),round(quantile(temp_df$Loss,.25)[[1]],2),round(quantile(temp_df$Loss,.50)[[1]],2),round(quantile(temp_df$Loss,.75)[[1]],2),round(quantile(temp_df$Loss,.95)[[1]],2),round(quantile(temp_df$Loss,.975)[[1]],2),round(quantile(temp_df$Loss,.99)[[1]],2),round(quantile(temp_df$Loss,.999)[[1]],2))
+  
+  colnames(over_all_summ) <- c("N","Start Point","End Point","Frequency Obs.","NA","0's","Severity Obs.","Min","Max","Mean","Median","Std. Dev","Skewness","Kurtosis","25th pct","50th pct","75th pct","95th pct","97.5th pct","99th pct","99.9th pct")
+  return(over_all_summ)
+}
+
+table_nums <- captioner::captioner(prefix = "Table.")
+
+f1=function(x){
+  paste(format(round(x / 1e6, 1), trim = TRUE), "M")
+}
+```
+
+# 1. Executive Summary
+
+This report contains the results of loss (severity) distribution fitting for risk event type **"Fraud"**and across all business lines. Risk event category mapping is defined in Section 3.4.3 of the model development document, "Model Documentation_TIAA_v2_09-26-2019". The total number of observations for modeling is **4,318** (including NAs and zeros) and **4,083** (excluding NAs and zeros). In this report we aim to separate the data into "Body" and "Tail" based on the loss values and try to fit distributions in each part separately. In order to apply this method, it is noted that both body and tail should have sufficient data points. We also apply separate analysis and goodness of fit tests to each part.
+
+
+The list of Statistical distributions tried are as follows:
+
++	Normal Distribution (Body)
+
++	Student's t Distribution (Body)
+
++	Lognormal Distribution (Body)
+
++	Gamma Distribution (Body)
+
++	Weibull Distribution (Body)
+
++	Log-logistic Distribution (Body)
+
++	Generalised Pareto Distribution or GPD (Tail)
+
+Goodness of fit tests performed are as follows:
+
++	Chi-square
+
++	Kolmogorov-Smirnov (KS)
+
++	Anderson-Darling (AD)
+
++	Cramer-von Mises (CVM)
+
++	Quantile-Quantile (QQ) plot
+
++	Probability-Probability (PP) plot
+
+The best model, out of all the models passing statistical tests is identified based on Log-likelihood (higher the value better the model), Akaike Information Criterion (AIC), and Bayesian Information Criterion (BIC) (lower the value better the model).
+
+The following techniques are used for determining the threshold selection for body and tail separation:
+
++	**Loss Percentile Plot** - Loss values are plotted against percentiles to find the percentile point from which high loss values begin.  This percentile point often provides a clear indication about the Tail threshold of the distribution.
+
++ **Mean Excess Plot** - Different threshold values (u) are plotted against excess mean 
+[E(x-u| x>u)] to find what is the optimal value beyond which the linearity of the mean excess function breaks.
+
++	**Hill Estimator** - In the Tail part of the data, usually the generalized exponential distribution (GPD) is fitted. The shape parameter of GPD is estimated using maximum likelihood estimation (MLE). However, it can also be estimated using Hill estimates involving ordered statistics. The plot of Hill estimates along the last tail points (k) provides a fair indication of body and tail separation of the data. Near the tail end, Hill estimates remain stable, and as we move toward the body, the estimates become erratic.
+
++	**Stability of Shape Parameter** - Similar to Hill estimates, MLE of the shape parameter is plotted against the number of exceedances. The value where the parameter estimates start losing stability can be considered as a good choice for threshold. Also, it can be monitored whether the parameter value tends to 0 (not a flat tailed distribution) or exceeds 1 (which might produce unrealistic Value at Risk (VaR) /Conditional VaR estimates).  
+
++	**Sensitivity of the Threshold** - In this technique we test multiple threshold points to check how the shape parameter is impacted. Also, we check the goodness of fit test result at various thresholds to find what the optimum threshold point is to divide the data into body and tail.
+
+Dividing the data into the body and tail segments is tried for loss severity distribution fitting. Its results are briefly summarized in the below table (Table. 1), the details of which are provided in the corresponding sections of this report.
+
+
+```{r,echo=FALSE}
+tab.1 <- table_nums(name = "tab_1", caption = "Summary Table")
+tab.2 <- table_nums(name = "tab_2", caption = "Complete Data Summary Table")
+tab.3 <- table_nums(name = "tab_3", caption = "Exploratory Data Analysis")
+tab.4 <- table_nums(name = "tab_4", caption = "Loss (USD) value at different Percentile")
+tab.4a <- table_nums(name = "tab_4a", caption = "GPD parameters for various thresholds")
+tab.4b <- table_nums(name = "tab_4b", caption = "GPD Goodness of Fit Tests for various thresholds")
+tab.5 <- table_nums(name = "tab_5", caption = "Summary of Data")
+tab.6 <- table_nums(name = "tab_6", caption = "Body Data Summary Table")
+tab.7 <- table_nums(name = "tab_7", caption = "Exploratory Data Analysis")
+tab.8 <- table_nums(name = "tab_8", caption = "Loss (USD) value at different Percentile")
+tab.9 <- table_nums(name = "tab_9", caption = "Estimated Parameters of Body")
+tab.15 <- table_nums(name = "tab_15",caption = "Goodness of fit Test (P-values)")
+tab.16 <- table_nums(name = "tab_16",caption = "Goodness of fit Criteria")
+tab.17 <- table_nums(name = "tab_17", caption = "Tail Data Summary Table")
+tab.18 <- table_nums(name = "tab_18", caption = "Exploratory Data Analysis")
+tab.19 <- table_nums(name = "tab_19", caption = "Loss (USD) value at different Percentile")
+tab.20 <- table_nums(name = "tab_20", caption = "Estimated Parameters of Tail")
+tab.22 <- table_nums(name = "tab_22",caption = "Goodness of fit Test (P-values)")
+tab.23 <- table_nums(name = "tab_23",caption = "Goodness of fit Criteria")
+```
+
+```{r, include=FALSE, echo=FALSE, warning = FALSE}
+low_threshold <- 93
+high_threshold <- 99
+threshold <- 98
+```
+
+
+\newline
+`r table_nums('tab_1')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.1,ft.align='left'}
+temp <- data.frame(c("2.3","2.4"),c("None","None"),c("Aggregate","Aggregate"),c("Body","Tail"),c("No adequate model","GPD"))
+colnames(temp) <-  c("Section","Transformation","Aggregate/Data Provider","Body/Tail","Conclusion")
+tab1 <- flextable(temp)
+tab1 <- bg(tab1, bg = "#66B3FF", part = "header")
+tab1 <- autofit(tab1)
+tab1
+```
+
+**Conclusion**
+
+
+
+# 2. Analysis of Risk Event Type "Fraud"
+```{r,warning=FALSE,echo=FALSE}
+Loss <-openxlsx::read.xlsx("M 388 Fraud 2019-10-31.xlsx.xlsx",sheet=1)
+Loss <- Loss[,c("Dataset","Final.Date","Inflation_adjusted_Loss(USD)")]
+colnames(Loss) <- c("Dataset","Date","Loss")
+Loss$Date <- as.Date(Loss$Date,origin="1899-12-30")
+b1 <- Loss
+k1 <- length(which(is.na(b1$Loss)))
+if(k1 > 0){b1 <- b1[-which(is.na(b1$Loss)),]}
+k2 <- length(which(b1$Loss==0))
+if(k2>0){b1=b1[-which(b1$Loss==0),]}
+
+```
+
+
+## 2.1. Complete Data Exploratory Data Analysis
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+over_all_summ <- eda(b1,k1,k2)
+```
+
+`r table_nums('tab_2')`
+```{r echo=FALSE,warning=FALSE,message=FALSE,fig.cap=tab.2,ft.align='left'}
+tab2 <- flextable(over_all_summ[,2:7])
+tab2 <- bg(tab2, bg = "#66B3FF", part = "header")
+tab2 <- autofit(tab2)
+tab2
+```
+
+`r table_nums('tab_3')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.3,ft.align='left'}
+tab3 <- flextable(over_all_summ[,8:14])
+tab3 <- bg(tab3, bg = "#66B3FF", part = "header")
+colkeys <- c("Min", "Max", "Mean", "Median", "Std. Dev", "Skewness", "Kurtosis")
+tab3 <- colformat_num(
+x = tab3, col_keys = colkeys,
+big.mark=",", digits = 2, na_str = "N/A")
+tab3 <- autofit(tab3)
+tab3
+```
+
+NAs and zeros are omitted from the analysis. The methodology for inflation adjustment is documented in Section 3.4.2.2.5 of the model development document "Model Documentation_TIAA_v2_09-26-2019".
+
+`r table_nums('tab_4')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.4,ft.align='left'}
+tab4 <- flextable(over_all_summ[,15:21])
+tab4 <- bg(tab4, bg = "#66B3FF", part = "header")
+colkeys <- c("25th pct","50th pct","75th pct","95th pct","97.5th pct","99th pct","99.9th pct")
+tab4 <- colformat_num(
+  x = tab4, col_keys = colkeys,
+  big.mark=",", digits = 2, na_str = "N/A")
+tab4 <- autofit(tab4)
+tab4
+```
+
+```{r,echo=FALSE, message=FALSE}
+x1 <- ggplot(data = b1, aes(x=Loss(USD))) +
+  geom_histogram(data = as.data.frame(b1$Loss),aes(x=b1$Loss),color="black",fill="white") +
+  scale_x_continuous(labels=f1)
+fig1 <- ggarrange(x1,ncol = 1,nrow = 1)
+annotate_figure(fig1,top = text_grob("Histogram of Loss (USD)", color = "black", face = "bold", size = 12),fig.lab = "Fig. 1", fig.lab.face = "bold")
+
+# hist(b1$Loss)
+```
+
+## 2.2. Threshold Selection for Body and Tail Segments
+
+**Loss Percentile Plot**
+  
+```{r, echo=FALSE}
+
+Low <- quantile(b1$Loss, low_threshold/100,na.rm=T)
+High <- quantile(b1$Loss, high_threshold/100,na.rm=T)
+```
+
+
+<!-- Plotting Loss Value at different Percentile -->
+```{r,echo=FALSE}
+pct_loss <- data.frame(pct=NULL,loss=NULL)
+for (i in 1:100) {
+  pct_loss[i,1] <- i
+  pct_loss[i,2] <- quantile(b1$Loss,i/100)
+}
+colnames(pct_loss) <- c("pct","loss")
+
+x1 <- ggplot(pct_loss, aes(x = pct_loss$pct, y = pct_loss$loss)) + geom_point()+geom_line()+
+  geom_vline(aes(xintercept = low_threshold, color = paste0("Pct.",low_threshold)))+
+  geom_vline(aes(xintercept = high_threshold, color = paste0("Pct.",high_threshold)))+
+  scale_y_continuous(labels=f1) +
+  labs(x="Percentile",y="Loss Value", color="")+
+  # xlab("Percentile")+ylab("Loss Value")+
+  scale_color_manual(values = c(assign(paste0("Pct.",low_threshold),"red"),assign(paste0("Pct.",high_threshold),"green")))
+annotate_figure(x1, top = text_grob("Loss Percentile Plot", color = "black", face = "bold", size = 12),fig.lab = "Fig. 2", fig.lab.face = "bold")
+```
+
+**Mean Excess Plot**
+  <!-- Plotting Mean Excess Value Plot -->
+```{r, include=FALSE, echo=FALSE}
+me_plot <- meplot(b1$Loss)
+mep_value <- data.frame(X = me_plot$x, Y = me_plot$y)
+```
+
+```{r, echo=FALSE}
+x1 <- ggplot(mep_value, aes(x = mep_value$X, y = mep_value$Y)) + geom_point()+geom_line()+
+  geom_vline(aes(xintercept = quantile(b1$Loss,low_threshold/100), color = paste0("Pct.",low_threshold)))+
+  geom_vline(aes(xintercept = quantile(b1$Loss,high_threshold/100), color = paste0("Pct.",high_threshold)))+
+  scale_x_continuous(labels=f1) +
+  scale_y_continuous(labels=f1) +
+  labs(x="Threshold",y="Mean Excess", color="")+
+  # xlab("Threshold")+ylab("Mean Excess")+
+  scale_color_manual(values = c(assign(paste0("Pct.",low_threshold),"red"),assign(paste0("Pct.",high_threshold),"green")))
+annotate_figure(x1, top = text_grob("Mean Excess Plot", color = "black", face = "bold", size = 12),fig.lab = "Fig. 3", fig.lab.face = "bold")
+```
+
+**Hill Estimator Plot**
+<!-- Plotting Hill Estimator Plot -->
+```{r, include=FALSE, echo=FALSE}
+hill_plot <- Hill(b1$Loss, plot = TRUE)
+hill_value <- data.frame(X = hill_plot$k, Y = hill_plot$gamma)
+```
+
+```{r, echo=FALSE}
+x2 <- ggplot(hill_value, aes(x = hill_value$X, y = hill_value$Y)) + geom_point()+geom_line()+
+  geom_vline(aes(xintercept = length(which(b1$Loss >= quantile(b1$Loss,low_threshold/100))), color = paste0("Pct.",low_threshold)))+
+  geom_vline(aes(xintercept = length(which(b1$Loss >= quantile(b1$Loss,high_threshold/100))), color = paste0("Pct.",high_threshold)))+
+  labs(x="k",y="Shape", color="")+
+  # xlab("Threshold")+ylab("Mean Excess")+
+  scale_color_manual(values = c(assign(paste0("Pct.",low_threshold),"red"),assign(paste0("Pct.",high_threshold),"green")))
+annotate_figure(x2, top = text_grob("Hill Estimator Plot", color = "black", face = "bold", size = 12),fig.lab = "Fig. 4", fig.lab.face = "bold")
+```
+
+**GPD Estimate of Shape($\xi$) vs Number of Exceedances**
+<!-- Plotting GPD estimate vs exceedance Plot -->
+```{r, include=FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+pct <- c(1:99)
+gpd_exc_data <- as.data.frame(matrix(0, nrow = length(pct), ncol = 7))
+colnames(gpd_exc_data) <- c("Exceedances","Shape","Std. Error","zvalue","Pr","Location","Scale")
+for(i in 1:length(pct)){
+  H <- quantile(b1$Loss, pct[i]/100, na.rm = T)
+  tail_data <- b1[b1$Loss > H,]
+  #parGpdMl = gpd(data=tail_data$Loss, threshold=H, method="pwm",information = c("observed", "expected"))
+  parGpdMl = eva::gpdFit(data = tail_data$Loss,threshold = H,method = "mle")
+  fit_gpd <- fitdist(tail_data$Loss, "gpd", start = list(xi = parGpdMl$par.sum$Estimate[2], mu = 4350, beta = parGpdMl$par.sum$Estimate[1]))
+  gpd_exc_data[i,2] <- parGpdMl$par.sum$Estimate[2]
+  gpd_exc_data[i,3] <- parGpdMl$par.sum$`Std. Error`[2]  #fit_gpd$sd[1] 
+  gpd_exc_data[i,4] <- parGpdMl$par.sum$`z value`[2]
+  gpd_exc_data[i,5] <- parGpdMl$par.sum$`Pr(>|z|)`[2]
+  gpd_exc_data[i,6] <- fit_gpd$estimate[[2]]
+  gpd_exc_data[i,7] <- parGpdMl$par.sum$Estimate[1]
+  gpd_exc_data[i,1] <- length(which(b1$Loss >= quantile(b1$Loss,pct[i]/100)))
+}
+
+```
+
+```{r, echo=FALSE}
+x2 <- ggplot(gpd_exc_data, aes(x = gpd_exc_data$Exceedances, y = gpd_exc_data$Shape)) + geom_point()+geom_line()+labs(x="Exceedances",y="Shape", color="")+
+   geom_hline(aes(yintercept = 1, color = paste0("Shape Threshold")))+
+  geom_vline(aes(xintercept = length(which(b1$Loss >= quantile(b1$Loss,low_threshold/100))), color = paste0("Pct.",low_threshold)))+
+  geom_vline(aes(xintercept = length(which(b1$Loss >= quantile(b1$Loss,high_threshold/100))), color = paste0("Pct.",high_threshold)))+
+  scale_color_manual(values = c(assign("Shape Threshold","blue"),c(assign(paste0("Pct.",low_threshold),"red"),assign(paste0("Pct.",high_threshold),"green"))))
+# c(assign(paste0("Pct.",low_threshold),"red"),assign(paste0("Pct.",high_threshold),"green"))
+annotate_figure(x2, top = text_grob("GPD Estimate of Shape vs Number of Exceedances", color = "black", face = "bold", size = 12),fig.lab = "Fig. 5", fig.lab.face = "bold")
+```
+
+```{r,include = FALSE,echo=FALSE, warning = FALSE}
+pct <- unique(c(90,95,c(floor(low_threshold):floor(high_threshold))))
+
+gpd_th_par <- as.data.frame(matrix(0, nrow = length(pct), ncol = 6))
+colnames(gpd_th_par) <- c("Threshold Point", "Number of Exceedances","Shape", "Std. Error", "z value","Pr (>|Z|)")
+gpd_th_par[,1] <- c("10% of Data (90th Pct.)", "5% of Data (95th Pct.)", paste0(pct[c(-1,-2)],"th Pct."))
+
+gpd_th_gof <- as.data.frame(matrix(0, nrow = length(pct), ncol = 6))
+colnames(gpd_th_gof) <- c("Threshold Point", "Number of Exceedances","ChiSq", "KS", "AD", "CVM")
+gpd_th_gof[,1] <- c("10% of Data (90th Pct.)", "5% of Data (95th Pct.)", paste0(pct[c(-1,-2)],"th Pct."))
+
+for(i in 1:length(pct)){
+  H <- quantile(b1$Loss, pct[i]/100, na.rm = T)
+  tail_data <- b1[b1$Loss > H,]
+  parGpdMl = eva::gpdFit(data = tail_data$Loss,threshold = H,method = "mle")
+  fit_gpd <- fitdist(tail_data$Loss, "gpd", start = list(xi = parGpdMl$par.sum$Estimate[2], mu = 4350, beta = parGpdMl$par.sum$Estimate[1]))
+  gpd_th_par[i,2] <- length(which(b1$Loss >= quantile(b1$Loss,pct[i]/100)))
+  gpd_th_par[i,3] <- fit_gpd$estimate[[1]] #parGpdMl$par.sum$Estimate[2]
+  gpd_th_par[i,4] <- parGpdMl$par.sum$`Std. Error`[2]
+  gpd_th_par[i,5] <- parGpdMl$par.sum$`z value`[2]
+  gpd_th_par[i,6] <- parGpdMl$par.sum$`Pr(>|z|)`[2]
+
+  gpd_th_gof[i,2] <- length(which(b1$Loss >= quantile(b1$Loss,pct[i]/100)))
+  h1_tail <- hist(tail_data$Loss)
+  breaks_cdf <- pgpd(h1_tail$breaks, xi = fit_gpd$estimate[[1]], mu = fit_gpd$estimate[[2]], beta= fit_gpd$estimate[[3]])
+  null.probs <- rollapply(breaks_cdf, 2, function(x) x[2]-x[1])
+  a_gpd <- chisq.test(h1_tail$counts, p=null.probs, rescale.p=TRUE)
+  ks_gpd <- stats::ks.test(tail_data$Loss,"pgpd",fit_gpd$estimate[[1]],fit_gpd$estimate[[2]],fit_gpd$estimate[[3]])
+  ad_gpd <- goftest::ad.test(tail_data$Loss,"pgpd",fit_gpd$estimate[[1]],fit_gpd$estimate[[2]],fit_gpd$estimate[[3]])
+  cvm_gpd <- goftest::cvm.test(tail_data$Loss,null="pgpd",fit_gpd$estimate[[1]],fit_gpd$estimate[[2]],fit_gpd$estimate[[3]])
+  gpd_th_gof[i,3] <- round(a_gpd$p.value,2)
+  gpd_th_gof[i,4] <- round(ks_gpd$p.value,2)
+  gpd_th_gof[i,5] <- round(ad_gpd$p.value,2)
+  gpd_th_gof[i,6] <- round(cvm_gpd$p.value,2)
+}
+```
+
+
+`r table_nums('tab_4a')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.4a,ft.align='left'}
+tab4a <- flextable(as.data.frame(gpd_th_par))
+tab4a <- bg(tab4a, bg = "#66B3FF", part = "header")
+colkeys <- c("Shape")
+colkeys1 <- c("Number of Exceedances")
+tab4a <- colformat_num(
+  x = tab4a, col_keys = colkeys,
+  big.mark=",", digits = 2, na_str = "N/A")
+tab4a <- colformat_num(
+  x = tab4a, col_keys = colkeys1,
+  big.mark=",", digits = 0, na_str = "N/A")
+tab4a <- color(tab4a, ~ Shape >= 1 , ~Shape,color = "red")
+tab4a <- color(tab4a, ~ Shape < 1 , ~Shape,color = "green")
+tab4a <- add_footer_lines(tab4a,values = c("Green highlighted cases signify the instances for which Shape(\u03BE) \u2264 1"),top=FALSE)
+tab4a <- fontsize(x=tab4a,size = 6,part = "footer")
+tab4a <- autofit(tab4a)
+tab4a
+```
+
+`r table_nums('tab_4b')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.4b,ft.align='left'}
+tab4b <- flextable(as.data.frame(gpd_th_gof))
+tab4b <- bg(tab4b, bg = "#66B3FF", part = "header")
+colkeys <- c("ChiSq","KS", "AD","CVM")
+colkeys1 <- c("Number of Exceedances")
+tab4b <- colformat_num(
+  x = tab4b, col_keys = colkeys,
+  big.mark=",", digits = 2, na_str = "N/A")
+tab4b <- colformat_num(
+  x = tab4b, col_keys = colkeys1,
+  big.mark=",", digits = 0, na_str = "N/A")
+tab4b <- color(tab4b, ~ ChiSq >= 0.05 , ~ChiSq,color = "green")
+tab4b <- color(tab4b, ~ KS >= 0.05 , ~KS,color = "green")
+tab4b <- color(tab4b, ~ AD >= 0.05 , ~AD,color = "green")
+tab4b <- color(tab4b, ~ CVM >= 0.05 , ~CVM,color = "green")
+tab4b <- color(tab4b, ~ ChiSq < 0.01 , ~ChiSq,color = "red")
+tab4b <- color(tab4b, ~ KS < 0.01 , ~KS,color = "red")
+tab4b <- color(tab4b, ~ AD < 0.01 , ~AD,color = "red")
+tab4b <- color(tab4b, ~ CVM < 0.01 , ~CVM,color = "red")
+tab4b <- color(tab4b, ~ c(ChiSq >= 0.01 & ChiSq < 0.05) , ~ChiSq,color = "orange")
+tab4b <- color(tab4b, ~ c(KS >= 0.01 & KS < 0.05) , ~KS,color = "orange")
+tab4b <- color(tab4b, ~ c(AD >= 0.01 & AD < 0.05) , ~AD,color = "orange")
+tab4b <- color(tab4b, ~ c(CVM >= 0.01 & CVM < 0.05) , ~CVM,color = "orange")
+tab4b <- add_footer_lines(tab4b,values = c("p-value greater than or equal to 0.05 is highlighted in green","p-value less than 0.05 and greater than or equal to 0.01 is highlighted in amber","p-value less than 0.01 is highlighted in red"),top=FALSE)
+tab4b <- fontsize(x=tab4b,size = 6,part = "footer")
+tab4b <- autofit(tab4b)
+tab4b
+```
+
+<!-- Creatring Bodyt and Tail out of Complete Data -->
+```{r,echo=FALSE, warning = FALSE}
+min_loss <- 1
+H <- quantile(b1$Loss, threshold/100,na.rm=T)
+
+body_data <- b1[b1$Loss > min_loss & b1$Loss <=H,]
+tail_data <- b1[b1$Loss > H,]
+data_summary <- matrix(0, nrow = 1, ncol = 6)
+data_summary[1,1] <- nrow(body_data) + nrow(tail_data)
+data_summary[1,2] <- nrow(body_data)
+data_summary[1,3] <- nrow(tail_data)
+data_summary[1,4] <- H
+data_summary[1,5] <- max(b1$Loss)
+data_summary[1,6] <- mean(b1$Loss)
+colnames(data_summary) <- c("Total Observations","Observations in Body", "Observations in Tail", paste0("Loss Value at ",threshold,"th Percentile Threshold"), "Max Loss (Total Data)", "Average Loss (Total Data)")
+```
+
+**Threshold Choice**
+
+
+\newline
+**Data Summary**
+  
+`r table_nums('tab_5')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.5,ft.align='left'}
+tab5 <- flextable(as.data.frame(data_summary))
+tab5 <- bg(tab5, bg = "#66B3FF", part = "header")
+colkeys <- c("Total Observations","Observations in Body", "Observations in Tail")
+colkeys1 <- c(paste0("Loss Value at ",threshold,"th Percentile Threshold"), "Max Loss (Total Data)", "Average Loss (Total Data)")
+tab5 <- colformat_num(
+  x = tab5, col_keys = colkeys1,
+  big.mark=",", digits = 2, na_str = "N/A")
+tab5 <- colformat_num(
+  x = tab5, col_keys = colkeys,
+  big.mark=",", digits = 0, na_str = "N/A")
+tab5 <- autofit(tab5)
+tab5
+```
+
+## 2.3 Body Distribution Fit
+
+```{r,warning=FALSE,echo=FALSE}
+body_summ <- eda(body_data,0,0)
+```
+
+
+`r table_nums('tab_6')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.6,ft.align='left'}
+tab6 <- flextable(body_summ[,c(2,3,7)])
+tab6 <- bg(tab6, bg = "#66B3FF", part = "header")
+tab6 <- autofit(tab6)
+tab6
+```
+
+
+`r table_nums('tab_7')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.7,ft.align='left'}
+tab7 <- flextable(body_summ[,8:14])
+tab7 <- bg(tab7, bg = "#66B3FF", part = "header")
+colkeys <- c("Min", "Max", "Mean", "Median", "Std. Dev", "Skewness", "Kurtosis")
+tab7 <- colformat_num(
+  x = tab7, col_keys = colkeys,
+  big.mark=",", digits = 2, na_str = "N/A")
+tab7 <- autofit(tab7)
+tab7
+```
+
+
+`r table_nums('tab_8')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.8,ft.align='left'}
+tab8 <- flextable(body_summ[,15:21])
+tab8 <- bg(tab8, bg = "#66B3FF", part = "header")
+colkeys <- c("25th pct","50th pct","75th pct","95th pct","97.5th pct","99th pct","99.9th pct")
+tab8 <- colformat_num(
+  x = tab8, col_keys = colkeys,
+  big.mark=",", digits = 2, na_str = "N/A")
+tab8 <- autofit(tab8)
+tab8
+```
+
+
+```{r,echo=FALSE, message=FALSE}
+x1 <- ggplot(data = body_data, aes(x=Loss(USD))) +
+  scale_x_continuous(labels=f1) +
+  geom_histogram(data = as.data.frame(body_data$Loss),aes(x=body_data$Loss),color="black",fill="white")
+fig6 <- ggarrange(x1,ncol = 1,nrow = 1)
+annotate_figure(fig6,top = text_grob("Histogram of Loss(USD)", color = "black", face = "bold", size = 12),fig.lab = "Fig. 6", fig.lab.face = "bold")
+
+# hist(b1$Loss)
+```
+
+
+<!-- Fitting Different Distributions on Body Data -->
+```{r, echo = FALSE, warning=FALSE}
+set.seed(100)
+fit_ln <- fitdist(body_data$Loss, "lnorm",method = "mle")
+fit_gm <- fitdist(body_data$Loss,"gamma",method = "mme")
+fit_wb <- fitdist(body_data$Loss,"weibull",method = "mle")
+fit_ll <- fitdist(body_data$Loss,"llogis",method="mle")
+# fit_burr <- fitdist(body_data$Loss, "burr", start = list(shape1 = 2.5, shape2 = 4.5, rate = 5))
+fit_t <- fitdist(body_data$Loss, "t.scaled", start=list(df=2, mean = mean(body_data$Loss),sd = sd(body_data$Loss)))
+fit_norm <- fitdist(body_data$Loss, "norm")
+# fit_exp <- fitdist(body_data$Loss,"exp",method = "mme")
+
+```
+
+
+### 2.3.1 Estimated Parameters of Body
+```{r,echo=FALSE}
+par <- data.frame(
+  Distribution=c("Lognormal","Lognormal","Gamma","Gamma","Weibull","Weibull","Loglogistic","Loglogistic","Student's-t","Student's-t","Student's-t","Normal","Normal"),Parameter=c("meanlog","sdlog","shape","rate","shape","scale","shape","scale","df","location","scale","mean","sd"),
+  Estimates=c(fit_ln$estimate[[1]],fit_ln$estimate[[2]],fit_gm$estimate[[1]],rate=fit_gm$estimate[[2]],fit_wb$estimate[[1]],fit_wb$estimate[[2]],fit_ll$estimate[[1]],fit_ll$estimate[[2]],fit_t$estimate[[1]],fit_t$estimate[[2]],fit_t$estimate[[3]],fit_norm$estimate[[1]],fit_norm$estimate[[2]]),
+  Loglik=c(fit_ln$loglik,fit_ln$loglik,fit_gm$loglik,fit_gm$loglik,fit_wb$loglik,fit_wb$loglik,fit_ll$loglik,fit_ll$loglik,fit_t$loglik,fit_t$loglik,fit_t$loglik,fit_norm$loglik,fit_norm$loglik),
+  AIC=c(fit_ln$aic,fit_ln$aic,fit_gm$aic,fit_gm$aic,fit_wb$aic,fit_wb$aic,fit_ll$aic,fit_ll$aic,fit_t$aic,fit_t$aic,fit_t$aic,fit_norm$aic,fit_norm$aic),
+  BIC=c(fit_ln$bic,fit_ln$bic,fit_gm$bic,fit_gm$bic,fit_wb$bic,fit_wb$bic,fit_ll$bic,fit_ll$bic,fit_t$bic,fit_t$bic,fit_t$bic,fit_norm$bic,fit_norm$bic))
+
+```
+
+
+`r table_nums('tab_9')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.9,ft.align='left'}
+tab9 <- flextable(par)
+tab9 <- theme_box(tab9)
+tab9 <- merge_v(tab9,j=~Distribution+Loglik+AIC+BIC)
+tab9 <- bg(tab9, bg = "#66B3FF", part = "header")
+colkeys = c("Estimates","Loglik","AIC","BIC")
+tab9 <- colformat_num(x = tab9, col_keys = colkeys,big.mark=",", na_str = "N/A")
+tab9 <- autofit(tab9)
+tab9
+```
+
+<!-- Plotting QQ, PP, Density and CDF Plots -->
+```{r,echo=FALSE,warning=FALSE}
+plot.legend <- c("Lognormal","Gamma","Weibull","Log-Logistic","Student's-t","Normal")
+
+den <- denscomp(list(fit_ln,fit_gm,fit_wb,fit_ll,fit_t,fit_norm), legendtext = plot.legend, plotstyle = "ggplot")+theme(plot.title = element_text( colour="black", size=12,face = "bold.italic"))+labs(x="Loss(USD)",y="Density")+scale_x_continuous(labels=f1)
+qq <- qqcomp(list(fit_ln,fit_gm,fit_wb,fit_ll,fit_t,fit_norm), legendtext = plot.legend, plotstyle = "ggplot")+theme(plot.title = element_text( colour="black", size=12,face = "bold.italic"))+scale_x_continuous(labels=f1) +scale_y_continuous(labels=f1)
+cdf <- cdfcomp(list(fit_ln,fit_gm,fit_wb,fit_ll,fit_t,fit_norm), legendtext = plot.legend, plotstyle = "ggplot")+theme(plot.title = element_text( colour="black", size=12,face = "bold.italic"))+labs(caption="*Black dots are Empirical CDF",x="CDF",y="Density")+scale_x_continuous(labels=f1)
+pp <- ppcomp(list(fit_ln,fit_gm,fit_wb,fit_ll,fit_t,fit_norm), legendtext = plot.legend, plotstyle = "ggplot")+theme(plot.title = element_text( colour="black", size=12,face = "bold.italic"))
+
+fig7 <- ggarrange(den, ncol = 1,nrow = 1)
+annotate_figure(fig7,fig.lab = "Fig. 7", fig.lab.face = "bold")
+```
+
+\newline
+
+```{r,echo=FALSE}
+fig8 <- ggarrange(qq, ncol = 1,nrow = 1)
+annotate_figure(fig8,fig.lab = "Fig. 8", fig.lab.face = "bold")
+```
+
+```{r,echo=FALSE,warning=FALSE}
+plot.legend <- c("Lognormal")
+qq <- qqcomp(fit_ln, legendtext = plot.legend, plotstyle = "ggplot")+theme(plot.title = element_text( colour="black", size=12,face = "bold.italic"))+scale_x_continuous(labels=f1)+scale_y_continuous(labels=f1)
+```
+
+
+\newline
+
+```{r,echo=FALSE}
+fig8a <- ggarrange(qq, ncol = 1,nrow = 1)
+annotate_figure(fig8a,fig.lab = "Fig. 8a", fig.lab.face = "bold")
+```
+
+
+```{r,echo=FALSE,warning=FALSE}
+di1 <- c("lnorm")
+dp1 <- list(meanlog = fit_ln$estimate[[1]], sdlog = fit_ln$estimate[[2]])
+
+gg <- ggplot(data = body_data, mapping = aes(sample = Loss)) +  #Replace b1 by modeling data 
+  stat_qq_band(distribution = di1, dparams = dp1,conf = 0.95) + # bandtype by default is "pointwise"   
+  stat_qq_line(distribution = di1, dparams = dp1) +
+  stat_qq_point(distribution = di1, dparams = dp1) + 
+  scale_x_continuous(labels=f1) +
+  scale_y_continuous(labels=f1) +
+  labs(title = paste0(" Lognormal QQ-plot 95% Confidence Interval"),x = "Theoretical Quantiles", y = "Sample Quantiles")
+
+fig8b <- ggarrange(gg, ncol = 1,nrow = 1)
+annotate_figure(fig8b,fig.lab = "Fig. 8b", fig.lab.face = "bold")
+```
+
+\newline
+
+```{r,echo=FALSE}
+fig9 <- ggarrange(cdf, ncol = 1,nrow = 1)
+annotate_figure(fig9,fig.lab = "Fig. 9", fig.lab.face = "bold")
+```
+
+\newline
+
+```{r,echo=FALSE}
+fig10 <- ggarrange(pp, ncol = 1,nrow = 1)
+annotate_figure(fig10,fig.lab = "Fig. 10", fig.lab.face = "bold")
+```
+
+<!-- Calculating Performance Metrics -->
+```{r,echo=FALSE,warning=FALSE,include=FALSE}
+set.seed(100)
+# ncell <- round((4*length(body_data$Loss))^(2/5),0)
+# cs_seq <- seq(from = (min(body_data$Loss)-0.1), to = (max(body_data$Loss)+1), by = (max(body_data$Loss)-min(body_data$Loss))/ncell)
+# h1 <- hist(body_data$Loss, breaks = cs_seq, include.lowest = FALSE, right = FALSE, main = "Loss")
+h1 <- hist(body_data$Loss)
+
+breaks_cdf <- plnorm(h1$breaks, meanlog= fit_ln$estimate[[1]],sdlog=fit_ln$estimate[[2]])
+null.probs <- rollapply(breaks_cdf, 2, function(x) x[2]-x[1])
+a_ln <- chisq.test(h1$counts, p=null.probs, rescale.p=TRUE)
+ks_ln <- stats::ks.test(body_data$Loss,"plnorm",fit_ln$estimate[[1]],fit_ln$estimate[[2]])
+ad_ln <- goftest::ad.test(body_data$Loss,"plnorm",fit_ln$estimate[[1]],fit_ln$estimate[[2]])
+cvm_ln <- goftest::cvm.test(body_data$Loss,null="plnorm",fit_ln$estimate[[1]],fit_ln$estimate[[2]])
+
+breaks_cdf <- pgamma(h1$breaks,shape = fit_gm$estimate[[1]],rate = fit_gm$estimate[[2]])
+null.probs <- rollapply(breaks_cdf, 2, function(x) x[2]-x[1])
+a_gm <- chisq.test(h1$counts, p=null.probs, rescale.p=TRUE)
+ks_gm <- stats::ks.test(body_data$Loss,"pgamma",fit_gm$estimate[[1]],fit_gm$estimate[[2]])
+ad_gm <- goftest::ad.test(body_data$Loss,"pgamma",fit_gm$estimate[[1]],fit_gm$estimate[[2]])
+cvm_gm <- goftest::cvm.test(x=body_data$Loss,null="pgamma",fit_gm$estimate[[1]],fit_gm$estimate[[2]])
+
+breaks_cdf <- pweibull(q = h1$breaks,shape = fit_wb$estimate[[1]], scale = fit_wb$estimate[[2]])
+null.probs <- rollapply(breaks_cdf, 2, function(x) x[2]-x[1])
+a_wb <- chisq.test(h1$counts, p=null.probs, rescale.p=TRUE)
+ks_wb <- stats::ks.test(body_data$Loss,"pweibull",shape =  fit_wb$estimate[[1]],scale = fit_wb$estimate[[2]])
+ad_wb <- goftest::ad.test(body_data$Loss,"pweibull",shape =  fit_wb$estimate[[1]],scale = fit_wb$estimate[[2]])
+cvm_wb <- goftest::cvm.test(body_data$Loss,"pweibull",shape =  fit_wb$estimate[[1]],scale = fit_wb$estimate[[2]])
+
+breaks_cdf <- pllogis(q = h1$breaks, shape = fit_ll$estimate[[1]], scale = fit_ll$estimate[[2]])
+null.probs <- rollapply(breaks_cdf, 2, function(x) x[2]-x[1])
+a_ll <- chisq.test(h1$counts, p=null.probs, rescale.p=TRUE)
+ks_ll <- stats::ks.test(x = body_data$Loss, "pllogis", shape = fit_ll$estimate[[1]], scale = fit_ll$estimate[[2]])
+ad_ll <- goftest::ad.test(x = body_data$Loss, "pllogis", shape = fit_ll$estimate[[1]], scale = fit_ll$estimate[[2]])
+cvm_ll <- goftest::cvm.test(body_data$Loss,"pllogis",shape = fit_ll$estimate[[1]], scale = fit_ll$estimate[[2]])
+
+breaks_cdf <- pt.scaled(q = h1$breaks, df = fit_t$estimate[[1]], mean = fit_t$estimate[[2]], sd = fit_t$estimate[[3]])
+null.probs <- rollapply(breaks_cdf, 2, function(x) x[2]-x[1])
+a_t <- chisq.test(h1$counts, p=null.probs, rescale.p=TRUE)
+ks_t <- stats::ks.test(x = body_data$Loss, "pt.scaled", df = fit_t$estimate[[1]], mean = fit_t$estimate[[2]], sd = fit_t$estimate[[3]])
+ad_t <- goftest::ad.test(x = body_data$Loss, "pt.scaled", df = fit_t$estimate[[1]], mean = fit_t$estimate[[2]], sd = fit_t$estimate[[3]])
+cvm_t <- goftest::cvm.test(body_data$Loss,"pt.scaled", df = fit_t$estimate[[1]], mean = fit_t$estimate[[2]], sd = fit_t$estimate[[3]])
+
+breaks_cdf <- pnorm(h1$breaks, mean= fit_norm$estimate[[1]],sd=fit_norm$estimate[[2]])
+null.probs <- rollapply(breaks_cdf, 2, function(x) x[2]-x[1])
+a_norm <- chisq.test(h1$counts, p=null.probs, rescale.p=TRUE)
+ks_norm <- stats::ks.test(body_data$Loss,"pnorm",fit_norm$estimate[[1]],fit_norm$estimate[[2]])
+ad_norm <- goftest::ad.test(body_data$Loss,"pnorm",fit_norm$estimate[[1]],fit_norm$estimate[[2]])
+cvm_norm <- goftest::cvm.test(body_data$Loss,null="pnorm",fit_norm$estimate[[1]],fit_norm$estimate[[2]])
+
+```
+
+
+```{r,echo=FALSE}
+goft <- data.frame(ChiSq=c(a_ln$p.value,a_gm$p.value,a_wb$p.value,a_ll$p.value,a_norm$p.value,a_t$p.value), KS=c(ks_ln$p.value,ks_gm$p.value,ks_wb$p.value,ks_ll$p.value,ks_norm$p.value,ks_t$p.value), AD=c(ad_ln$p.value,ad_gm$p.value,ad_wb$p.value,ad_ll$p.value,ad_norm$p.value,ad_t$p.value), CVM=c(cvm_ln$p.value,cvm_gm$p.value,cvm_wb$p.value,cvm_ll$p.value,cvm_norm$p.value,cvm_t$p.value))
+# row.names(goft) <- c("lognormal","gamma","weibull","log-logistic","normal","Student's-t")
+```
+
+
+`r table_nums('tab_15')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.15,ft.align='left'}
+goft <- cbind(Distribution=c("Lognormal","Gamma","Weibull","Log-logistic","Normal","Student's-t"),goft)
+tab15 <- flextable(goft)
+tab15 <- bg(tab15, bg = "#66B3FF", part = "header")
+tab15 <- color(tab15, ~ ChiSq >= 0.05 , ~ChiSq,color = "green")
+tab15 <- color(tab15, ~ KS >= 0.05 , ~KS,color = "green")
+tab15 <- color(tab15, ~ AD >= 0.05 , ~AD,color = "green")
+tab15 <- color(tab15, ~ CVM >= 0.05 , ~CVM,color = "green")
+tab15 <- color(tab15, ~ ChiSq < 0.01 , ~ChiSq,color = "red")
+tab15 <- color(tab15, ~ KS < 0.01 , ~KS,color = "red")
+tab15 <- color(tab15, ~ AD < 0.01 , ~AD,color = "red")
+tab15 <- color(tab15, ~ CVM < 0.01 , ~CVM,color = "red")
+tab15 <- color(tab15, ~ c(ChiSq >= 0.01 & ChiSq < 0.05) , ~ChiSq,color = "orange")
+tab15 <- color(tab15, ~ c(KS >= 0.01 & KS < 0.05) , ~KS,color = "orange")
+tab15 <- color(tab15, ~ c(AD >= 0.01 & AD < 0.05) , ~AD,color = "orange")
+tab15 <- color(tab15, ~ c(CVM >= 0.01 & CVM < 0.05) , ~CVM,color = "orange")
+colkeys <- c("ChiSq","KS","AD","CVM")
+tab15 <- colformat_num(x = tab15, col_keys = colkeys, big.mark=",", digits = 2, na_str = "N/A")
+tab15 <- add_footer_lines(tab15,values = c("p-value greater than or equal to 0.05 is highlighted in green","p-value less than 0.05 and greater than or equal to 0.01 is highlighted in amber","p-value less than 0.01 is highlighted in red"),top=FALSE)
+tab15 <- fontsize(x=tab15,size = 6,part = "footer")
+tab15 <- autofit(tab15)
+tab15
+```
+
+
+\newline
+```{r,echo=FALSE}
+gofc <- round_df(data.frame(Loglik =c(fit_ln$loglik,fit_gm$loglik,fit_wb$loglik,fit_ll$loglik,fit_norm$loglik,fit_t$loglik), AIC=c(fit_ln$aic,fit_gm$aic,fit_wb$aic,fit_ll$aic,fit_norm$aic,fit_t$aic), BIC=c(fit_ln$bic,fit_gm$bic,fit_wb$bic,fit_ll$bic,fit_norm$bic,fit_t$bic)),2)
+row.names(gofc) <- c("lognormal","gamma","weibull","Log-logistic","normal","Student's-t")
+```
+\newline
+
+
+`r table_nums('tab_16')`
+```{r,echo=FALSE,fig.cap=tab.16,ft.align='left'}
+gofc <- cbind(Distribution=c("Lognormal","Gamma","Weibull","Log-logistic","Normal","Student's-t"),gofc)
+tab16 <- flextable(gofc,theme_fun = theme_booktabs)
+tab16 <- bg(tab16, bg = "#66B3FF", part = "header")
+colkeys = c("Loglik","AIC","BIC")
+tab16 <- colformat_num(x = tab16, col_keys = colkeys,big.mark=",", digits = 2, na_str = "N/A")
+tab16 <- autofit(tab16)
+tab16
+```
+
+
+**Conclusion**
+
+
+## 2.4 Tail Distribution Fit
+
+```{r,warning=FALSE,echo=FALSE}
+tail_summ <- eda(tail_data,0,0)
+```
+
+`r table_nums('tab_17')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.17,ft.align='left'}
+tab17 <- flextable(tail_summ[,c(2,3,7)])
+tab17 <- bg(tab17, bg = "#66B3FF", part = "header")
+tab17 <- autofit(tab17)
+tab17
+```
+
+`r table_nums('tab_18')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.18,ft.align='left'}
+tab18 <- flextable(tail_summ[,8:14])
+tab18 <- bg(tab18, bg = "#66B3FF", part = "header")
+colkeys <- c("Min", "Max", "Mean", "Median", "Std. Dev", "Skewness", "Kurtosis")
+tab18 <- colformat_num(
+  x = tab18, col_keys = colkeys,
+  big.mark=",", digits = 2, na_str = "N/A")
+tab18 <- autofit(tab18)
+tab18
+```
+
+`r table_nums('tab_19')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.19,ft.align='left'}
+tab19 <- flextable(tail_summ[,15:21])
+tab19 <- bg(tab19, bg = "#66B3FF", part = "header")
+colkeys <- c("25th pct","50th pct","75th pct","95th pct","97.5th pct","99th pct","99.9th pct")
+tab19 <- colformat_num(
+  x = tab19, col_keys = colkeys,
+  big.mark=",", digits = 2, na_str = "N/A")
+tab19 <- autofit(tab19)
+tab19
+```
+
+```{r,echo=FALSE, message=FALSE}
+x1 <- ggplot(data = tail_data, aes(x=Loss(USD))) +
+  scale_x_continuous(labels=f1) +
+  geom_histogram(data = as.data.frame(tail_data$Loss),aes(x=tail_data$Loss),color="black",fill="white")
+fig11 <- ggarrange(x1,ncol = 1,nrow = 1)
+annotate_figure(fig11,top = text_grob("Histogram of Loss(USD)", color = "black", face = "bold", size = 12),fig.lab = "Fig. 11", fig.lab.face = "bold")
+
+# hist(b1$Loss)
+```
+
+<!-- Fitting Different Distributions on Tail Data -->
+```{r, echo = FALSE, warning=FALSE}
+parGpdMl = eva::gpdFit(data = tail_data$Loss,threshold = H,method = "mle")
+fit_gpd <- fitdist(tail_data$Loss, "gpd", start = list(xi = parGpdMl$par.sum$Estimate[2], mu = 4350, beta = parGpdMl$par.sum$Estimate[1]))
+
+parms_gpd <- data.frame(Xi=fit_gpd$estimate[[1]],Beta=fit_gpd$estimate[[2]], Loglik = fit_gpd$loglik, AIC = fit_gpd$aic, BIC = fit_gpd$bic)
+rownames(parms_gpd) <- c("Estimates")
+
+```
+
+```{r,echo=FALSE}
+par <- data.frame(
+  Distribution=c("GPD","GPD","GPD"),Parameter=c("Location","Scale","Shape"),
+  Estimates=c(fit_gpd$estimate[[2]],fit_gpd$estimate[[3]],fit_gpd$estimate[[1]]),
+  Loglik=c(fit_gpd$loglik,fit_gpd$loglik,fit_gpd$loglik),
+  AIC=c(fit_gpd$aic,fit_gpd$aic,fit_gpd$aic),
+  BIC=c(fit_gpd$bic,fit_gpd$bic,fit_gpd$bic))
+
+```
+### 2.4.1. Estimated Parameters of Tail
+
+`r table_nums('tab_20')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.20,ft.align='left'}
+tab20 <- flextable(par)
+tab20 <- theme_box(tab20)
+tab20 <- merge_v(tab20,j=~Distribution+Loglik+AIC+BIC)
+tab20 <- bg(tab20, bg = "#66B3FF", part = "header")
+colkeys = c("Estimates","Loglik","AIC","BIC")
+tab20 <- colformat_num(x = tab20, col_keys = colkeys,big.mark=",", na_str = "N/A")
+tab20 <- autofit(tab20)
+tab20
+```
+
+<!-- Plotting QQ, PP, Density and CDF Plots -->
+```{r,echo=FALSE,warning=FALSE}
+plot.legend <- c("GPD")
+
+den <- denscomp(list(fit_gpd), legendtext = plot.legend, plotstyle = "ggplot")+theme(plot.title = element_text( colour="black", size=12,face = "bold.italic"))+labs(x="Loss(USD)",y="Density")+scale_x_continuous(labels=f1)
+qq <- qqcomp(list(fit_gpd), legendtext = plot.legend, plotstyle = "ggplot")+theme(plot.title = element_text( colour="black", size=12,face = "bold.italic"))+scale_x_continuous(labels=f1)+scale_y_continuous(labels=f1)
+cdf <- cdfcomp(list(fit_gpd), legendtext = plot.legend, plotstyle = "ggplot")+theme(plot.title = element_text( colour="black", size=12,face = "bold.italic"))+labs(caption="*Black dots are Empirical CDF",x="CDF",y="Density")+scale_x_continuous(labels=f1)
+pp <- ppcomp(list(fit_gpd), legendtext = plot.legend, plotstyle = "ggplot")+theme(plot.title = element_text( colour="black", size=12,face = "bold.italic"))
+
+fig12 <- ggarrange(den, ncol = 1,nrow = 1)
+annotate_figure(fig12,fig.lab = "Fig. 12", fig.lab.face = "bold")
+```
+
+\newline
+
+```{r,echo=FALSE}
+fig13 <- ggarrange(qq, ncol = 1,nrow = 1)
+annotate_figure(fig13,fig.lab = "Fig. 13", fig.lab.face = "bold")
+```
+
+```{r,echo=FALSE,warning=FALSE}
+di1 <- c("gpd")
+dp1 <- list(xi = fit_gpd$estimate[[1]], beta = fit_gpd$estimate[[2]])
+
+gg <- ggplot(data = tail_data, mapping = aes(sample = Loss)) +  #Replace b1 by modeling data 
+  stat_qq_band(distribution = di1, dparams = dp1,conf = 0.95) + # bandtype by default is "pointwise"   
+  stat_qq_line(distribution = di1, dparams = dp1) +
+  stat_qq_point(distribution = di1, dparams = dp1) + 
+  scale_x_continuous(labels=f1) +
+  scale_y_continuous(labels=f1) +
+  labs(title = paste0(" GPD QQ-plot 95% Confidence Interval"),x = "Theoretical Quantiles", y = "Sample Quantiles")
+
+fig13a <- ggarrange(gg, ncol = 1,nrow = 1)
+annotate_figure(fig13a,fig.lab = "Fig. 13a", fig.lab.face = "bold")
+```
+
+\newline
+
+```{r,echo=FALSE}
+fig14 <- ggarrange(cdf, ncol = 1,nrow = 1)
+annotate_figure(fig14,fig.lab = "Fig. 14", fig.lab.face = "bold")
+```
+
+\newline
+
+```{r,echo=FALSE}
+fig15 <- ggarrange(pp, ncol = 1,nrow = 1)
+annotate_figure(fig15,fig.lab = "Fig. 15", fig.lab.face = "bold")
+```
+
+
+<!-- Calculating Performance Metrics -->
+```{r,echo=FALSE,warning=FALSE,include=FALSE}
+set.seed(100)
+h1 <- hist(tail_data$Loss)
+
+breaks_cdf <- pgpd(h1$breaks, xi= fit_gpd$estimate[[1]], mu = fit_gpd$estimate[[2]], beta= fit_gpd$estimate[[3]])
+null.probs <- rollapply(breaks_cdf, 2, function(x) x[2]-x[1])
+a_gpd <- chisq.test(h1$counts, p=null.probs, rescale.p=TRUE)
+ks_gpd <- stats::ks.test(tail_data$Loss,"pgpd",fit_gpd$estimate[[1]],fit_gpd$estimate[[2]],fit_gpd$estimate[[3]])
+ad_gpd <- goftest::ad.test(tail_data$Loss,"pgpd",fit_gpd$estimate[[1]],fit_gpd$estimate[[2]],fit_gpd$estimate[[3]])
+cvm_gpd <- goftest::cvm.test(tail_data$Loss,null="pgpd",fit_gpd$estimate[[1]],fit_gpd$estimate[[2]],fit_gpd$estimate[[3]])
+
+```
+
+
+```{r,echo=FALSE}
+goft <- round_df(data.frame(ChiSq=c(a_gpd$p.value), KS=c(ks_gpd$p.value), AD=c(ad_gpd$p.value), CVM=c(cvm_gpd$p.value)),2)
+row.names(goft) <- c("GPD")
+```
+
+
+`r table_nums('tab_22')`
+```{r echo=FALSE,message=FALSE,fig.cap=tab.22,ft.align='left'}
+# tab14 <- flextable(goft)
+goft <- cbind(Distribution=c("GPD"),goft)
+tab22 <- flextable(goft)
+tab22 <- bg(tab22, bg = "#66B3FF", part = "header")
+tab22 <- color(tab22, ~ ChiSq >= 0.05 , ~ChiSq,color = "green")
+tab22 <- color(tab22, ~ KS >= 0.05 , ~KS,color = "green")
+tab22 <- color(tab22, ~ AD >= 0.05 , ~AD,color = "green")
+tab22 <- color(tab22, ~ CVM >= 0.05 , ~CVM,color = "green")
+tab22 <- color(tab22, ~ ChiSq < 0.01 , ~ChiSq,color = "red")
+tab22 <- color(tab22, ~ KS < 0.01 , ~KS,color = "red")
+tab22 <- color(tab22, ~ AD < 0.01 , ~AD,color = "red")
+tab22 <- color(tab22, ~ CVM < 0.01 , ~CVM,color = "red")
+tab22 <- color(tab22, ~ c(ChiSq >= 0.01 & ChiSq < 0.05) , ~ChiSq,color = "orange")
+tab22 <- color(tab22, ~ c(KS >= 0.01 & KS < 0.05) , ~KS,color = "orange")
+tab22 <- color(tab22, ~ c(AD >= 0.01 & AD < 0.05) , ~AD,color = "orange")
+tab22 <- color(tab22, ~ c(CVM >= 0.01 & CVM < 0.05) , ~CVM,color = "orange")
+colkeys <- c("ChiSq","KS","AD","CVM")
+tab22 <- colformat_num(x = tab22, col_keys = colkeys, big.mark=",", digits = 2, na_str = "N/A")
+tab22 <- add_footer_lines(tab22,values = c("p-value greater than or equal to 0.05 is highlighted in green","p-value less than 0.05 and greater than or equal to 0.01 is highlighted in amber","p-value less than 0.01 is highlighted in red"),top=FALSE)
+tab22 <- fontsize(x=tab22,size = 6,part = "footer")
+tab22 <- autofit(tab22)
+tab22
+```
+
+\newline
+```{r,echo=FALSE}
+gofc <- round_df(data.frame(Loglik =c(fit_gpd$loglik), AIC=c(fit_gpd$aic), BIC=c(fit_gpd$bic)),2)
+row.names(gofc) <- c("GPD")
+```
+\newline
+
+`r table_nums('tab_23')`
+```{r,echo=FALSE,fig.cap=tab.23,ft.align='left'}
+gofc <- cbind(Distribution=c("GPD"),gofc)
+tab23 <- flextable(gofc,theme_fun = theme_booktabs)
+tab23 <- bg(tab23, bg = "#66B3FF", part = "header")
+colkeys = c("Loglik","AIC","BIC")
+tab23 <- colformat_num(x = tab23, col_keys = colkeys,big.mark=",", digits = 2, na_str = "N/A")
+tab23 <- autofit(tab23)
+tab23
+```
+
+**Conclusion**
